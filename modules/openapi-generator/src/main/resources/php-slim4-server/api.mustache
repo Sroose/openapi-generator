@@ -37,6 +37,16 @@ use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Exception;
+use Psr\Log\LoggerInterface;
+use OpenAPIServer\Auth\AuthUser;
+use OpenAPIServer\DB\Database;
+use Awurth\SlimValidation\Validator;
+use Respect\Validation\Validator as V;
+use OpenAPIServer\ValidationRules;
+use OpenAPIServer\Exceptions\InputValidationException;
+use OpenAPIServer\Exceptions\ConflictException;
+use OpenAPIServer\Exceptions\InvalidJsonException;
+use OpenAPIServer\Auth\Middleware\TokenAuthentication\Exceptions\ForbiddenException;
 
 /**
  * {{classname}} Class Doc Comment
@@ -52,15 +62,58 @@ abstract class {{classname}}
      * @var ContainerInterface|null Slim app container instance
      */
     protected $container;
+    
+    /**
+     * @var LoggerInterface|null The logger
+     */
+    protected $logger;
+
+    /**
+     * @var PDO|null The PDO database object
+     */
+    protected $db;
+
+    /**
+     * @var AuthUser|null User object if authenticated
+     */
+    protected $authUser;
+
+    /**
+     * @var Validator|null Validator helper class
+     */
+    protected $v;
+
+    /**
+     * @var array|null Validations rules
+     */
+    protected $rules;
 
     /**
      * Route Controller constructor receives container
      *
      * @param ContainerInterface|null $container Slim app container instance
      */
-    public function __construct(ContainerInterface $container = null)
+    public function __construct(ContainerInterface $container = null, LoggerInterface $logger, Database $db, Validator $validator)
     {
         $this->container = $container;
+        $this->logger = $logger;
+        $this->db = $db;
+        $this->v = $validator;
+        if ($container->has('auth_user')) {
+            $this->authUser = $container->get('auth_user');
+        }
+
+        // Load custom rules
+        V::with('OpenAPIServer\\ValidationRules\\');
+
+        /**
+         * This formats only define validation regarding format and length
+         * To check for mandatory fields and eg right postcode per country,
+         * use extra validation per operation.
+         */
+        $this->rules = [
+            //to populate
+        ];
     }
 
     {{#operations}}
@@ -84,6 +137,8 @@ abstract class {{classname}}
      *
      * @return ResponseInterface
      * @throws Exception to force implementation class to override this method
+     *
+     * Allowed roles: {{#hasAuthMethods}}{{#authMethods}}{{name}}{{#hasMore}}, {{/hasMore}}{{/authMethods}}{{/hasAuthMethods}}
      */
     public function {{operationId}}(ServerRequestInterface $request, ResponseInterface $response, array $args)
     {
@@ -94,19 +149,44 @@ abstract class {{classname}}
         {{/headerParams}}
         {{/hasHeaderParams}}
         {{#hasPathParams}}
-        {{#pathParams}}
-        ${{paramName}} = $args['{{baseName}}'];
+        
+        // VALIDATE PATH PARAMETERS
+        $this->v->validate($args, [
+        {{#pathParams}}       
+            '{{baseName}}' => $this->rules['{{baseName}}']{{#hasMore}},{{/hasMore}}
         {{/pathParams}}
+        ]);
+        if (!$this->v->isValid()) {
+            throw new InputValidationException($this->v->getErrors());
+        }
         {{/hasPathParams}}
+        {{#hasBodyParam}}
+        
+        // VALIDATE BODY
+        $body = $request->getParsedBody();
+        if ($body === null) {
+            // Not a valid Json provided
+            throw new InvalidJsonException();
+        }
+        // Load custom rules
+        V::with('OpenAPIServer\\ValidationRules\\');
+        $expectedFields = [
+            //to populate
+        ];
+        $this->v->validate($body, $expectedFields);
+        if (!$this->v->isValid()) {
+            throw new InputValidationException($this->v->getErrors());
+        }
+        {{/hasBodyParam}}
+        {{#hasFormParams}}
+        {{#formParams}}
         {{#hasQueryParams}}
         $queryParams = $request->getQueryParams();
         {{#queryParams}}
         ${{paramName}} = (key_exists('{{baseName}}', $queryParams)) ? $queryParams['{{baseName}}'] : null;
         {{/queryParams}}
         {{/hasQueryParams}}
-        {{#hasFormParams}}
-        $body = $request->getParsedBody();
-        {{#formParams}}
+        
         {{^isFile}}
         ${{paramName}} = (isset($body['{{baseName}}'])) ? $body['{{baseName}}'] : null;
         {{/isFile}}
@@ -120,14 +200,21 @@ abstract class {{classname}}
         {{/isFile}}
         {{/formParams}}
         {{/hasFormParams}}
-        {{#hasBodyParam}}
-        $body = $request->getParsedBody();
-        {{/hasBodyParam}}
+        
+        // DATABASE OPERATION
         $message = "How about implementing {{nickname}} as a {{httpMethod}} method in {{apiPackage}}\{{userClassname}} class?";
         throw new Exception($message);
 
-        $response->getBody()->write($message);
-        return $response->withStatus(501);
+        // RETURN DATA
+        $statusCode = 999;
+        $data = [
+            //to populate
+        ];
+        $payload = json_encode($data);
+        $response->getBody()->write($payload);
+        return $response
+                  ->withHeader('Content-Type', 'application/json')
+                  ->withStatus($statusCode);
     }
     {{/operation}}
     {{/operations}}
